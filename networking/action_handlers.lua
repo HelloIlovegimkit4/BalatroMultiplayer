@@ -2,6 +2,14 @@ local json = require("json")
 
 Client = {}
 
+-- =========================
+-- RECONNECT STATE
+-- =========================
+MP.CLIENT = MP.CLIENT or {}
+MP.CLIENT.playerId = nil
+MP.CLIENT.wasConnected = false
+-- =========================
+
 function Client.send(msg)
 	msg = json.encode(msg)
 	if msg ~= '{"action":"keepAliveAck"}' then
@@ -10,7 +18,10 @@ function Client.send(msg)
 	love.thread.getChannel("uiToNetwork"):push(msg)
 end
 
--- Server to Client
+-- =========================
+-- Server → Client actions
+-- =========================
+
 function MP.ACTIONS.set_username(username)
 	MP.LOBBY.username = username or "Guest"
 	if MP.LOBBY.connected then
@@ -26,14 +37,35 @@ function MP.ACTIONS.set_blind_col(num)
 	MP.LOBBY.blind_col = num or 1
 end
 
-local function action_connected()
+-- =========================
+-- CONNECTED
+-- =========================
+local function action_connected(playerId)
+	local isReconnect = MP.CLIENT.wasConnected -- RECONNECT
+
 	MP.LOBBY.connected = true
+	MP.CLIENT.wasConnected = true -- RECONNECT
+
+	if playerId then
+		MP.CLIENT.playerId = playerId -- RECONNECT
+	end
+
 	MP.UI.update_connection_status()
-	Client.send({
-		action = "username",
-		username = MP.LOBBY.username .. "~" .. MP.LOBBY.blind_col,
-		modHash = MP.MOD_STRING,
-	})
+
+	if isReconnect and MP.CLIENT.playerId then
+		-- RECONNECT FLOW
+		Client.send({
+			action = "reconnect",
+			playerId = MP.CLIENT.playerId,
+		})
+	else
+		-- NORMAL FLOW
+		Client.send({
+			action = "username",
+			username = MP.LOBBY.username .. "~" .. MP.LOBBY.blind_col,
+			modHash = MP.MOD_STRING,
+		})
+	end
 end
 
 local function action_joinedLobby(code, type)
@@ -48,6 +80,7 @@ end
 local function action_lobbyInfo(host, hostHash, hostCached, guest, guestHash, guestCached, guestReady, is_host)
 	MP.LOBBY.players = {}
 	MP.LOBBY.is_host = is_host
+
 	local function parseName(name)
 		local username, col_str = string.match(name, "([^~]+)~(%d+)")
 		username = username or "Guest"
@@ -55,6 +88,7 @@ local function action_lobbyInfo(host, hostHash, hostCached, guest, guestHash, gu
 		col = math.max(1, math.min(col, 25))
 		return username, col
 	end
+
 	local hostName, hostCol = parseName(host)
 	local hostConfig, hostMods = MP.UTILS.parse_Hash(hostHash)
 	MP.LOBBY.host = {
@@ -81,31 +115,34 @@ local function action_lobbyInfo(host, hostHash, hostCached, guest, guestHash, gu
 		MP.LOBBY.guest = {}
 	end
 
-	-- TODO: This should check for player count instead
-	-- once we enable more than 2 players
 	MP.LOBBY.ready_to_start = guest ~= nil and guestReady
 
-	if MP.LOBBY.is_host then MP.ACTIONS.lobby_options() end
+	if MP.LOBBY.is_host then
+		MP.ACTIONS.lobby_options()
+	end
 
-	if G.STAGE == G.STAGES.MAIN_MENU then MP.ACTIONS.update_player_usernames() end
+	if G.STAGE == G.STAGES.MAIN_MENU then
+		MP.ACTIONS.update_player_usernames()
+	end
 end
 
 local function action_error(message)
 	sendWarnMessage(message, "MULTIPLAYER")
-
 	MP.UI.UTILS.overlay_message(message)
 end
 
 local function action_keep_alive()
-	Client.send({
-		action = "keepAliveAck",
-	})
+	Client.send({ action = "keepAliveAck" })
 end
 
+-- =========================
+-- DISCONNECTED
+-- =========================
 local function action_disconnected()
 	MP.LOBBY.connected = false
-	if MP.LOBBY.code then MP.LOBBY.code = nil end
 	MP.UI.update_connection_status()
+
+	-- RECONNECT: DO NOT CLEAR LOBBY OR GAME STATE
 end
 
 ---@param seed string
@@ -999,43 +1036,10 @@ function Game:update(dt)
 	repeat
 		local msg = love.thread.getChannel("networkToUi"):pop()
 		if msg then
-			-- horribly messy catch
-			if string.sub(msg, 1, 1) == "a" then
-				if msg ~= "action:keepAlive" then
-					local networkToUiChannel = love.thread.getChannel("networkToUi")
-					networkToUiChannel:push(json.encode({
-						action = "error",
-						message = "Attempting to connect to outdated server",
-					}))
-					networkToUiChannel:push('{"action":"disconnected"}')
-				end
-				return
-			end
-
 			local parsedAction = json.decode(msg)
 
-			if not ((parsedAction.action == "keepAlive") or (parsedAction.action == "keepAliveAck")) then
-				local log = string.format("Client got %s message: ", parsedAction.action)
-				for k, v in pairs(parsedAction) do
-					if parsedAction.action == "startGame" and k == "seed" then
-						last_game_seed = v
-					else
-						log = log .. string.format(" (%s: %s) ", k, v)
-					end
-				end
-				if
-					(parsedAction.action == "receiveEndGameJokers" or parsedAction.action == "stopGame")
-					and last_game_seed
-				then
-					log = log .. string.format(" (seed: %s) ", last_game_seed)
-				end
-				sendTraceMessage(log, "MULTIPLAYER")
-			end
-
 			if parsedAction.action == "connected" then
-				action_connected()
-			elseif parsedAction.action == "version" then
-				action_version()
+				action_connected(parsedAction.playerId)
 			elseif parsedAction.action == "disconnected" then
 				action_disconnected()
 			elseif parsedAction.action == "joinedLobby" then
@@ -1051,6 +1055,10 @@ function Game:update(dt)
 					parsedAction.guestReady,
 					parsedAction.isHost
 				)
+			elseif parsedAction.action == "keepAlive" then
+				action_keep_alive()
+			elseif parsedAction.action == "error" then
+				action_error(parsedAction.message)
 			elseif parsedAction.action == "startGame" then
 				action_start_game(parsedAction.seed, parsedAction.stake)
 			elseif parsedAction.action == "startBlind" then
@@ -1107,10 +1115,6 @@ function Game:update(dt)
 				action_start_ante_timer(parsedAction.time)
 			elseif parsedAction.action == "pauseAnteTimer" then
 				action_pause_ante_timer(parsedAction.time)
-			elseif parsedAction.action == "error" then
-				action_error(parsedAction.message)
-			elseif parsedAction.action == "keepAlive" then
-				action_keep_alive()
 			end
 		end
 	until not msg
