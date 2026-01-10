@@ -229,6 +229,9 @@ MP.load_mp_dir("compatibility")
 MP.load_mp_dir("gamemodes")
 MP.load_mp_dir("rulesets")
 MP.load_mp_dir("ui", true)
+local networking_dir = MP.EXPERIMENTAL.use_new_networking and "networking" or "networking-old"
+MP.load_mp_file(networking_dir .. "/action_handlers.lua")  -- must happen BEFORE networking starts
+
 
 if MP.LOBBY.config.weekly then -- this could be a function but why bother
 	MP.load_mp_file("rulesets/weeklies/" .. MP.LOBBY.config.weekly .. ".lua")
@@ -248,18 +251,10 @@ MP.load_mp_dir("objects/consumables/sandbox")
 MP.load_mp_dir("objects/boosters")
 MP.load_mp_dir("objects/challenges")
 
--- Load networking handlers
-local networking_dir = MP.EXPERIMENTAL.use_new_networking and "networking" or "networking-old"
-MP.load_mp_file(networking_dir .. "/action_handlers.lua") -- defines MP.ACTIONS.connect() but Client.send is nil here
 
--- Load socket
-local SOCKET = MP.load_mp_file(networking_dir .. "/socket.lua") -- defines Client.send
+local SOCKET = MP.load_mp_file(networking_dir .. "/socket.lua")
 MP.NETWORKING_THREAD = love.thread.newThread(SOCKET)
 MP.NETWORKING_THREAD:start(SMODS.Mods["Multiplayer"].config.server_url, SMODS.Mods["Multiplayer"].config.server_port)
 
--- Only call connect AFTER Client.send exists
-if Client and type(Client.send) == "function" then
-    MP.ACTIONS.connect()
-else
-    sendWarnMessage("Client.send is not initialized! Cannot connect to server.", "MULTIPLAYER")
-end
+-- Only now safe to call connect
+MP.ACTIONS.connect()
