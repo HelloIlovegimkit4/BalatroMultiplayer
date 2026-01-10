@@ -963,25 +963,120 @@ function Game:update(dt)
 
     repeat
         local msg = love.thread.getChannel("networkToUi"):pop()
-        if msg then
-            local parsedAction = json.decode(msg)
-
-            if parsedAction.action == "connected" then
-                action_connected(parsedAction.playerId)
-            elseif parsedAction.action == "disconnected" then
-                action_disconnected()
-            elseif parsedAction.action == "keepAliveAck" then
-                action_keep_alive_ack()
-            -- include all your other parsedAction handlers as before
+        if msg and type(msg) == "string" then
+            local ok, parsedAction = pcall(json.decode, msg)
+            if not ok or not parsedAction or type(parsedAction) ~= "table" then
+                sendDebugMessage("Invalid JSON from network: " .. tostring(msg), "MULTIPLAYER")
+            else
+                if parsedAction.action == "connected" then
+                    action_connected(parsedAction.playerId)
+                elseif parsedAction.action == "disconnected" then
+                    action_disconnected()
+                elseif parsedAction.action == "keepAliveAck" then
+                    action_keep_alive_ack()
+				elseif parsedAction.action == "joinedLobby" then
+					action_joinedLobby(parsedAction.code, parsedAction.type)
+				elseif parsedAction.action == "lobbyInfo" then
+					action_lobbyInfo(
+						parsedAction.host,
+						parsedAction.hostHash,
+						parsedAction.hostCached,
+						parsedAction.guest,
+						parsedAction.guestHash,
+						parsedAction.guestCached,
+						parsedAction.guestReady,
+						parsedAction.isHost
+					)
+				elseif parsedAction.action == "error" then
+					action_error(parsedAction.message)
+				elseif parsedAction.action == "startGame" then
+					action_start_game(parsedAction.seed, parsedAction.stake)
+				elseif parsedAction.action == "startBlind" then
+					action_start_blind()
+				elseif parsedAction.action == "enemyInfo" then
+					action_enemy_info(parsedAction.score, parsedAction.handsLeft, parsedAction.skips, parsedAction.lives)
+				elseif parsedAction.action == "stopGame" then
+					action_stop_game()
+				elseif parsedAction.action == "endPvP" then
+					action_end_pvp()
+				elseif parsedAction.action == "playerInfo" then
+					action_player_info(parsedAction.lives)
+				elseif parsedAction.action == "winGame" then
+					action_win_game()
+				elseif parsedAction.action == "loseGame" then
+					action_lose_game()
+				elseif parsedAction.action == "lobbyOptions" then
+					action_lobby_options(parsedAction)
+				elseif parsedAction.action == "enemyLocation" then
+					enemyLocation(parsedAction)
+				elseif parsedAction.action == "sendPhantom" then
+					action_send_phantom(parsedAction.key)
+				elseif parsedAction.action == "removePhantom" then
+					action_remove_phantom(parsedAction.key)
+				elseif parsedAction.action == "speedrun" then
+					action_speedrun()
+				elseif parsedAction.action == "asteroid" then
+					action_asteroid()
+				elseif parsedAction.action == "soldJoker" then
+					action_sold_joker()
+				elseif parsedAction.action == "letsGoGamblingNemesis" then
+					action_lets_go_gambling_nemesis()
+				elseif parsedAction.action == "eatPizza" then
+					action_eat_pizza(parsedAction.whole) -- rename to "discards" when possible
+				elseif parsedAction.action == "spentLastShop" then
+					action_spent_last_shop(parsedAction.amount)
+				elseif parsedAction.action == "magnet" then
+					action_magnet()
+				elseif parsedAction.action == "magnetResponse" then
+					action_magnet_response(parsedAction.key)
+				elseif parsedAction.action == "getEndGameJokers" then
+					action_get_end_game_jokers()
+				elseif parsedAction.action == "receiveEndGameJokers" then
+					action_receive_end_game_jokers(parsedAction.keys)
+				elseif parsedAction.action == "getNemesisDeck" then
+					action_get_nemesis_deck()
+				elseif parsedAction.action == "receiveNemesisDeck" then
+					action_receive_nemesis_deck(parsedAction.cards)
+				elseif parsedAction.action == "endGameStatsRequested" then
+					action_send_game_stats()
+				elseif parsedAction.action == "nemesisEndGameStats" then
+					-- Handle receiving game stats (is only logged now, now shown in the ui)
+				elseif parsedAction.action == "startAnteTimer" then
+					action_start_ante_timer(parsedAction.time)
+				elseif parsedAction.action == "pauseAnteTimer" then
+					action_pause_ante_timer(parsedAction.time)
+				end
             end
         end
     until not msg
 end
 
-
+-- =========================
+-- DISCONNECTED
+-- =========================
 local function action_disconnected()
 	MP.LOBBY.connected = false
 	MP.UI.update_connection_status()
 
 	-- RECONNECT: DO NOT CLEAR LOBBY OR GAME STATE
+end
+-- #region Client to Server
+
+
+local game_update_ref = Game.update
+---@diagnostic disable-next-line: duplicate-set-field
+function Game:update(dt)
+	game_update_ref(self, dt)
+
+	repeat
+		local msg = love.thread.getChannel("networkToUi"):pop()
+		if msg then
+			local parsedAction = json.decode(msg)
+
+			if parsedAction.action == "connected" then
+				action_connected(parsedAction.playerId)
+			elseif parsedAction.action == "disconnected" then
+				action_disconnected()
+		end
+	until not msg
 end
