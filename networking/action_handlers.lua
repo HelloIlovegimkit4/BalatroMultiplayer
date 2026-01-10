@@ -680,6 +680,14 @@ function MP.ACTIONS.join_lobby(code)
 	})
 end
 
+function MP.ACTIONS.set_username(username)
+    MP.LOBBY.username = username
+    Client.send({
+        action = "setUsername",
+        username = username,
+    })
+end
+
 function MP.ACTIONS.ready_lobby()
 	Client.send({
 		action = "readyLobby",
