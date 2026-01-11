@@ -1,255 +1,258 @@
--- Multiplayer core.lua
 MP = SMODS.current_mod
--- Emergency fallback in case utils fails to load
-MP.UTILS = MP.UTILS or {
-    get_username = function() return "Guest_" .. math.random(1000,9999) end,
-    get_blind_col = function() return 1 end,
-    get_weekly = function() return nil end,
-    -- add more dummies if more errors appear later
-}
------------------------
--- Basic tables
------------------------
+
 MP.BANNED_MODS = {
-    ["Incantation"]     = true,
-    ["Brainstorm"]      = true,
-    ["DVPreview"]       = true,
-    ["Aura"]            = true,
-    ["NotJustYet"]      = true,
-    ["Showman"]         = true,
-    ["TagPreview"]      = true,
-    ["FantomsPreview"]  = true,   -- ← trailing comma is fine in Lua 5.1+
+	["Incantation"] = true,
+	["Brainstorm"] = true,
+	["DVPreview"] = true,
+	["Aura"] = true,
+	["NotJustYet"] = true,
+	["Showman"] = true,
+	["TagPreview"] = true,
+	["FantomsPreview"] = true,
 }
 
 MP.LOBBY = {
-    connected = false,
-    temp_code = "",
-    temp_seed = "",
-    code = nil,
-    type = "",
-    config = {}, -- set below
-    deck = {
-        back = "Red Deck",
-        sleeve = "sleeve_casl_none",
-        stake = 1,
-        challenge = "",
-    },
-    username = "Guest",
-    blind_col = 1,
-    host = {},
-    guest = {},
-    is_host = false,
-    ready_to_start = false,
+	connected = false,
+	temp_code = "",
+	temp_seed = "",
+	code = nil,
+	type = "",
+	config = {}, -- Now set in MP.reset_lobby_config
+	deck = {
+		back = "Red Deck",
+		sleeve = "sleeve_casl_none",
+		stake = 1,
+		challenge = "",
+	},
+	username = "Guest",
+	blind_col = 1,
+	host = {},
+	guest = {},
+	is_host = false,
+	ready_to_start = false,
 }
-
 MP.GAME = {}
 MP.UI = {}
-MP.ACTIONS = {}     -- will be filled later
-MP.INTEGRATIONS = {}
-MP.PREVIEW = {}
+MP.ACTIONS = {}
+MP.INTEGRATIONS = {
+	Preview = SMODS.Mods["Multiplayer"].config.integrations.Preview,
+}
+
+MP.PREVIEW = {
+	text = SMODS.Mods["Multiplayer"].config.preview.text,
+	button = SMODS.Mods["Multiplayer"].config.preview.button,
+}
+
 MP.EXPERIMENTAL = {
-    use_new_networking          = true,
-    show_sandbox_collection     = false,
-    alt_stakes                  = false,
+	use_new_networking = true,
+	show_sandbox_collection = false,
+	alt_stakes = false,
 }
 
 G.C.MULTIPLAYER = HEX("AC3232")
+
 MP.SMODS_VERSION = "1.0.0~BETA-1221a"
 
------------------------
--- INSANE_INT helper
------------------------
-do
-    local INSANE_INT = 9007199254740991   -- 2⁵³-1 (safe JS integer)
-
-    MP.INSANE_INT = setmetatable({}, {
-        __index = function() return INSANE_INT end,
-        __call = function() return INSANE_INT end
-    })
+function MP.should_use_the_order()
+	return MP.LOBBY and MP.LOBBY.config and MP.LOBBY.config.the_order and MP.LOBBY.code
 end
 
------------------------
--- Safe ACTIONS stubs (prevents very early crashes)
------------------------
-local function stub() end
-
-local actions_list = {
-    "lobby_options", "start_game", "ready_lobby", "unready_lobby",
-    "leave_lobby", "update_player_usernames", "connect", "stop_game"
-    -- you can add more here later
-}
-
-for _, action in ipairs(actions_list) do
-    MP.ACTIONS[action] = stub
-end
-
------------------------
--- Lobby config
------------------------
-function MP.reset_lobby_config(persist_ruleset_and_gamemode)
-    local prev = MP.LOBBY.config or {}
-
-    MP.LOBBY.config = {
-        gold_on_life_loss       = true,
-        no_gold_on_round_loss   = false,
-        death_on_round_loss     = true,
-        different_seeds         = false,
-        the_order               = true,
-        starting_lives          = 4,
-        pvp_start_round         = 2,
-        timer_base_seconds      = 150,
-        timer_increment_seconds = 60,
-        pvp_countdown_seconds   = 3,
-        showdown_starting_antes = 3,
-        ruleset    = persist_ruleset_and_gamemode and prev.ruleset    or "ruleset_mp_blitz",
-        gamemode   = persist_ruleset_and_gamemode and prev.gamemode   or "gamemode_mp_attrition",
-        weekly     = nil,
-        custom_seed = "random",
-        different_decks = false,
-        back       = "Red Deck",
-        sleeve     = "sleeve_casl_none",
-        stake      = 1,
-        challenge  = "",
-        cocktail   = "",
-        multiplayer_jokers = true,
-        timer      = true,
-        timer_forgiveness = 0,
-        forced_config  = false,
-        preview_disabled = false,
-        legacy_smallworld = false,
-    }
-end
-
-MP.reset_lobby_config()   -- initial setup
-
------------------------
--- Game states
------------------------
-function MP.reset_game_states()
-    MP.GAME = {
-        ready_blind          = false,
-        ready_blind_text     = localize('b_ready'),
-        processed_round_done = false,
-        lives                = 0,
-        loaded_ante          = 0,
-        loading_blinds       = false,
-        comeback_bonus_given = true,
-        comeback_bonus       = 0,
-        end_pvp              = false,
-
-        enemy = {
-            score         = MP.INSANE_INT(),
-            score_text    = "0",
-            hands         = 4,
-            location      = localize("loc_selecting"),
-            skips         = 0,
-            lives         = MP.LOBBY.config.starting_lives or 4,
-            sells         = 0,
-            sells_per_ante = {},
-            spent_in_shop = {},
-            highest_score = MP.INSANE_INT(),
-        },
-
-        location      = "loc_selecting",
-        timer         = MP.LOBBY.config.timer_base_seconds,
-        timer_started = false,
-        pvp_countdown = 0,
-    }
-end
-
-MP.reset_game_states()
-
------------------------
--- Generic loader helpers
------------------------
-function MP.load_mp_file(rel_path)
-    local fullpath = MP.path .. "/" .. rel_path
-
-    local chunk, err = SMODS.load_file(rel_path, "Multiplayer")
-    if not chunk then
-        sendWarnMessage("Failed to load/compile: " .. tostring(rel_path) .. "\n" .. tostring(err), "MULTIPLAYER")
-        return nil
-    end
-
-    local ok, result = pcall(chunk)
-    if not ok then
-        sendWarnMessage("Runtime error in " .. rel_path .. ":\n" .. tostring(result), "MULTIPLAYER")
-        return nil
-    end
-
-    return result   -- usually returns table / functions
+function MP.load_mp_file(file)
+	local chunk, err = SMODS.load_file(file, "Multiplayer")
+	if chunk then
+		local ok, func = pcall(chunk)
+		if ok then
+			return func
+		else
+			sendWarnMessage("Failed to process file: " .. func, "MULTIPLAYER")
+		end
+	else
+		sendWarnMessage("Failed to find or compile file: " .. tostring(err), "MULTIPLAYER")
+	end
+	return nil
 end
 
 function MP.load_mp_dir(directory, recursive)
-    recursive = recursive or false
+	recursive = recursive or false
+	local function has_prefix(name)
+		return name:match("^_") ~= nil
+	end
 
-    local function has_prefix(name) return name:match("^_") ~= nil end
+	local dir_path = MP.path .. "/" .. directory
+	local items = NFS.getDirectoryItemsInfo(dir_path)
+	-- sort by prefix like { _file, _dir, file, dir }
+	table.sort(items, function(a, b)
+		if has_prefix(a.name) ~= has_prefix(b.name) then return has_prefix(a.name) end
+		return (a.type == "directory") ~= (b.type == "directory") and a.type ~= "directory" or false
+	end)
 
-    local dir_path = MP.path .. "/" .. directory
-
-    local success, items = pcall(NFS.getDirectoryItemsInfo, dir_path)
-    if not success then
-        sendWarnMessage("Cannot read directory: " .. dir_path, "MULTIPLAYER")
-        return
-    end
-
-    table.sort(items, function(a, b)
-        local ap = has_prefix(a.name)
-        local bp = has_prefix(b.name)
-        if ap ~= bp then return ap end   -- _files first
-
-        if a.type ~= b.type then
-            return a.type ~= "directory"   -- files before directories
-        end
-
-        return a.name < b.name
-    end)
-
-    for _, item in ipairs(items) do
-        local path = directory .. "/" .. item.name
-        sendDebugMessage("Loading: " .. path, "MULTIPLAYER")
-
-        if item.type == "directory" then
-            if recursive then
-                MP.load_mp_dir(path, true)
-            end
-        else
-            MP.load_mp_file(path)
-        end
-    end
+	-- load sorted files/dirs
+	for _, item in ipairs(items) do
+		local path = directory .. "/" .. item.name
+		sendDebugMessage("Loading item: " .. path, "MULTIPLAYER")
+		if item.type ~= "directory" then
+			MP.load_mp_file(path)
+		elseif recursive then
+			MP.load_mp_dir(path, recursive)
+		end
+	end
 end
 
------------------------
--- Early initialization order
------------------------
--- 1. Utilities should be loaded BEFORE we use them
-MP.load_mp_file("utils.lua")           -- ← very important! many mods miss this
+MP.load_mp_dir("lib")
+MP.load_mp_dir("overrides")
 
--- Now we can safely use MP.UTILS
-MP.LOBBY.username   = MP.UTILS.get_username() or "Guest"
-MP.LOBBY.blind_col  = MP.UTILS.get_blind_col() or 1
-MP.LOBBY.config.weekly = MP.UTILS.get_weekly and MP.UTILS.get_weekly() or nil
+function MP.reset_lobby_config(persist_ruleset_and_gamemode)
+	sendDebugMessage("Resetting lobby options", "MULTIPLAYER")
+	MP.LOBBY.config = {
+		gold_on_life_loss = true,
+		no_gold_on_round_loss = false,
+		death_on_round_loss = true,
+		different_seeds = false,
+		the_order = true,
+		starting_lives = 4,
+		pvp_start_round = 2,
+		timer_base_seconds = 150,
+		timer_increment_seconds = 60,
+		pvp_countdown_seconds = 3,
+		showdown_starting_antes = 3,
+		ruleset = persist_ruleset_and_gamemode and MP.LOBBY.config.ruleset or "ruleset_mp_blitz",
+		gamemode = persist_ruleset_and_gamemode and MP.LOBBY.config.gamemode or "gamemode_mp_attrition",
+		weekly = nil,
+		custom_seed = "random",
+		different_decks = false,
+		back = "Red Deck",
+		sleeve = "sleeve_casl_none",
+		stake = 1,
+		challenge = "",
+		cocktail = "",
+		multiplayer_jokers = true,
+		timer = true,
+		timer_forgiveness = 0,
+		forced_config = false,
+		preview_disabled = false,
+		legacy_smallworld = false,
+	}
+end
+MP.reset_lobby_config()
 
--- 2. Networking (very important to load early)
-local net_dir = MP.EXPERIMENTAL.use_new_networking and "networking" or "networking-old"
+function MP.reset_game_states()
+	sendDebugMessage("Resetting game states", "MULTIPLAYER")
+	MP.GAME = {
+		ready_blind = false,
+		ready_blind_text = localize("b_ready"),
+		processed_round_done = false,
+		lives = 0,
+		loaded_ante = 0,
+		loading_blinds = false,
+		comeback_bonus_given = true,
+		comeback_bonus = 0,
+		end_pvp = false,
+		enemy = {
+			score = MP.INSANE_INT.empty(),
+			score_text = "0",
+			hands = 4,
+			location = localize("loc_selecting"),
+			skips = 0,
+			lives = MP.LOBBY.config.starting_lives,
+			sells = 0,
+			sells_per_ante = {},
+			spent_in_shop = {},
+			highest_score = MP.INSANE_INT.empty(),
+		},
+		location = "loc_selecting",
+		next_blind_context = nil,
+		ante_key = tostring(math.random()),
+		antes_keyed = {},
+		prevent_eval = false,
+		round_ended = false,
+		duplicate_end = false,
+		misprint_display = "",
+		spent_total = 0,
+		spent_before_shop = 0,
+		highest_score = MP.INSANE_INT.empty(),
+		timer = MP.LOBBY.config.timer_base_seconds,
+		timer_started = false,
+		pvp_countdown = 0,
+		real_money = 0,
+		ce_cache = false,
+		furthest_blind = 0,
+		pincher_index = -3,
+		pincher_unlock = false,
+		asteroids = 0,
+		pizza_discards = 0,
+		wait_for_enemys_furthest_blind = false,
+		disable_live_and_timer_hud = false,
+		timers_forgiven = 0,
+		stats = {
+			reroll_count = 0,
+			reroll_cost_total = 0,
+			-- Add more stats here in the future
+		},
+	}
+end
+MP.reset_game_states()
 
-MP.load_mp_file(net_dir .. "/action_handlers.lua")   -- ← this should replace stubs
+MP.LOBBY.username = MP.UTILS.get_username()
+MP.LOBBY.blind_col = MP.UTILS.get_blind_col()
 
-local socket_chunk = MP.load_mp_file(net_dir .. "/socket.lua")
-if socket_chunk then
-    MP.NETWORKING_THREAD = love.thread.newThread(socket_chunk)
-    MP.NETWORKING_THREAD:start(
-        SMODS.Mods["Multiplayer"].config.server_url or "multiplayer.example.com",
-        SMODS.Mods["Multiplayer"].config.server_port or 14141
-    )
-else
-    sendErrorMessage("Failed to load networking/socket.lua - multiplayer disabled", "MULTIPLAYER")
+MP.LOBBY.config.weekly = MP.UTILS.get_weekly()
+
+if not SMODS.current_mod.lovely then
+	G.E_MANAGER:add_event(Event({
+		no_delete = true,
+		trigger = "immediate",
+		blockable = false,
+		blocking = false,
+		func = function()
+			if G.MAIN_MENU_UI then
+				MP.UI.UTILS.overlay_message(
+					MP.UTILS.wrapText(
+						"Your Multiplayer Mod is not loaded correctly, make sure the Multiplayer folder does not have an extra Multiplayer folder around it.",
+						50
+					)
+				)
+				return true
+			end
+		end,
+	}))
+	return
 end
 
--- Optional: you can check which actions are still stubs after loading
--- for debugging purposes (remove later)
--- for k,v in pairs(MP.ACTIONS) do
---     if v == stub then
---         sendWarnMessage("Action still stubbed: " .. k, "MULTIPLAYER")
---     end
--- end
+SMODS.Atlas({
+	key = "modicon",
+	path = "modicon.png",
+	px = 34,
+	py = 34,
+})
+
+MP.load_mp_dir("compatibility")
+
+local networking_dir = MP.EXPERIMENTAL.use_new_networking and "networking" or "networking-old"
+MP.load_mp_file(networking_dir .. "/action_handlers.lua")
+
+MP.load_mp_dir("gamemodes")
+MP.load_mp_dir("rulesets")
+MP.load_mp_dir("ui", true)
+
+if MP.LOBBY.config.weekly then -- this could be a function but why bother
+	MP.load_mp_file("rulesets/weeklies/" .. MP.LOBBY.config.weekly .. ".lua")
+end
+
+MP.load_mp_dir("objects/editions")
+MP.load_mp_dir("objects/enhancements")
+MP.load_mp_dir("objects/stickers")
+MP.load_mp_dir("objects/blinds")
+MP.load_mp_dir("objects/decks")
+MP.load_mp_dir("objects/jokers")
+MP.load_mp_dir("objects/jokers/sandbox")
+MP.load_mp_dir("objects/stakes")
+MP.load_mp_dir("objects/tags")
+MP.load_mp_dir("objects/consumables")
+MP.load_mp_dir("objects/consumables/sandbox")
+MP.load_mp_dir("objects/boosters")
+MP.load_mp_dir("objects/challenges")
+
+local SOCKET = MP.load_mp_file(networking_dir .. "/socket.lua")
+MP.NETWORKING_THREAD = love.thread.newThread(SOCKET)
+MP.NETWORKING_THREAD:start(SMODS.Mods["Multiplayer"].config.server_url, SMODS.Mods["Multiplayer"].config.server_port)
+MP.ACTIONS.connect()
