@@ -2,6 +2,14 @@ local json = require("json")
 
 Client = {}
 
+function Client.send(msg)
+	msg = json.encode(msg)
+	if msg ~= '{"action":"keepAliveAck"}' then
+		sendTraceMessage(string.format("Client sent message: %s", msg), "MULTIPLAYER")
+	end
+	love.thread.getChannel("uiToNetwork"):push(msg)
+end
+
 
 MP.CLIENT = MP.CLIENT or {}
 MP.CLIENT.playerId = nil

@@ -61,3 +61,22 @@ function MP.UTILS.string_split(str, sep)
     end
     return fields
 end
+function sendTraceMessage(msg, tag)
+    print(string.format("[TRACE] [%s] %s", tag or "GLOBAL", msg))
+end
+
+function sendDebugMessage(msg, tag)
+    print(string.format("[DEBUG] [%s] %s", tag or "GLOBAL", msg))
+end
+
+function sendWarnMessage(msg, tag)
+    print(string.format("[WARN]  [%s] %s", tag or "GLOBAL", msg))
+end
+
+function sendErrorMessage(msg, tag)
+    print(string.format("[ERROR] [%s] %s", tag or "GLOBAL", msg))
+    if MP and MP.UI and MP.UI.UTILS and MP.UI.UTILS.overlay_message then
+        MP.UI.UTILS.overlay_message(msg)
+    end
+end
+
