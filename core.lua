@@ -54,7 +54,19 @@ MP.SMODS_VERSION = "1.0.0~BETA-1221a"
 -- Helper for insane integer values
 MP.INSANE_INT = {}
 function MP.INSANE_INT.empty()
-	return 9007199254740991 -- max safe integer
+	return 9007199254740991
+end
+
+-- Utility functions
+MP.UTILS = {}
+function MP.UTILS.get_username()
+	return "Guest"
+end
+function MP.UTILS.get_blind_col()
+	return 1
+end
+function MP.UTILS.get_weekly()
+	return nil
 end
 
 -- Utility function to check if "the order" should be used
