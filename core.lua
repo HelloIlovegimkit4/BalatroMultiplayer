@@ -1,6 +1,12 @@
 -- Multiplayer core.lua
 MP = SMODS.current_mod
-
+-- Emergency fallback in case utils fails to load
+MP.UTILS = MP.UTILS or {
+    get_username = function() return "Guest_" .. math.random(1000,9999) end,
+    get_blind_col = function() return 1 end,
+    get_weekly = function() return nil end,
+    -- add more dummies if more errors appear later
+}
 -----------------------
 -- Basic tables
 -----------------------
