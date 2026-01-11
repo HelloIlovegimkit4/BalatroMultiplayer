@@ -61,6 +61,14 @@ local function action_connected(playerId)
         })
     end
 end
+local function action_joinedLobby(code, type)
+	MP.LOBBY.code = code
+	MP.LOBBY.type = type
+	MP.LOBBY.ready_to_start = false
+	MP.ACTIONS.sync_client()
+	MP.ACTIONS.lobby_info()
+	MP.UI.update_connection_status()
+end
 local function action_error(message)
     sendWarnMessage(message, "MULTIPLAYER")
     MP.UI.UTILS.overlay_message(message)
