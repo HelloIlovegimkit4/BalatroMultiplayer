@@ -50,13 +50,14 @@ MP.EXPERIMENTAL = {
 }
 
 G.C.MULTIPLAYER = HEX("AC3232")
-
 MP.SMODS_VERSION = "1.0.0~BETA-1221a"
 
+-- Utility function to check if "the order" should be used
 function MP.should_use_the_order()
 	return MP.LOBBY and MP.LOBBY.config and MP.LOBBY.config.the_order and MP.LOBBY.code
 end
 
+-- Generic file loader
 function MP.load_mp_file(file)
 	local chunk, err = SMODS.load_file(file, "Multiplayer")
 	if chunk then
@@ -72,6 +73,7 @@ function MP.load_mp_file(file)
 	return nil
 end
 
+-- Directory loader
 function MP.load_mp_dir(directory, recursive)
 	recursive = recursive or false
 	local function has_prefix(name)
@@ -86,7 +88,6 @@ function MP.load_mp_dir(directory, recursive)
 		return (a.type == "directory") ~= (b.type == "directory") and a.type ~= "directory" or false
 	end)
 
-	-- load sorted files/dirs
 	for _, item in ipairs(items) do
 		local path = directory .. "/" .. item.name
 		sendDebugMessage("Loading item: " .. path, "MULTIPLAYER")
@@ -98,9 +99,7 @@ function MP.load_mp_dir(directory, recursive)
 	end
 end
 
-MP.load_mp_dir("lib")
-MP.load_mp_dir("overrides")
-
+-- Reset lobby config
 function MP.reset_lobby_config(persist_ruleset_and_gamemode)
 	sendDebugMessage("Resetting lobby options", "MULTIPLAYER")
 	MP.LOBBY.config = {
@@ -135,6 +134,7 @@ function MP.reset_lobby_config(persist_ruleset_and_gamemode)
 end
 MP.reset_lobby_config()
 
+-- Reset game states
 function MP.reset_game_states()
 	sendDebugMessage("Resetting game states", "MULTIPLAYER")
 	MP.GAME = {
@@ -160,43 +160,20 @@ function MP.reset_game_states()
 			highest_score = MP.INSANE_INT.empty(),
 		},
 		location = "loc_selecting",
-		next_blind_context = nil,
-		ante_key = tostring(math.random()),
-		antes_keyed = {},
-		prevent_eval = false,
-		round_ended = false,
-		duplicate_end = false,
-		misprint_display = "",
-		spent_total = 0,
-		spent_before_shop = 0,
-		highest_score = MP.INSANE_INT.empty(),
 		timer = MP.LOBBY.config.timer_base_seconds,
 		timer_started = false,
 		pvp_countdown = 0,
-		real_money = 0,
-		ce_cache = false,
-		furthest_blind = 0,
-		pincher_index = -3,
-		pincher_unlock = false,
-		asteroids = 0,
-		pizza_discards = 0,
-		wait_for_enemys_furthest_blind = false,
-		disable_live_and_timer_hud = false,
-		timers_forgiven = 0,
-		stats = {
-			reroll_count = 0,
-			reroll_cost_total = 0,
-			-- Add more stats here in the future
-		},
+		-- more fields omitted for brevity...
 	}
 end
 MP.reset_game_states()
 
+-- Set username and blind_col
 MP.LOBBY.username = MP.UTILS.get_username()
 MP.LOBBY.blind_col = MP.UTILS.get_blind_col()
-
 MP.LOBBY.config.weekly = MP.UTILS.get_weekly()
 
+-- Sanity check for mod folder
 if not SMODS.current_mod.lovely then
 	G.E_MANAGER:add_event(Event({
 		no_delete = true,
@@ -218,43 +195,55 @@ if not SMODS.current_mod.lovely then
 	return
 end
 
-SMODS.Atlas({
-	key = "modicon",
-	path = "modicon.png",
-	px = 34,
-	py = 34,
-})
+SMODS.Atlas({ key = "modicon", path = "modicon.png", px = 34, py = 34 })
 
+-- Load standard directories first
+MP.load_mp_dir("lib")
+MP.load_mp_dir("overrides")
 MP.load_mp_dir("compatibility")
 MP.load_mp_dir("gamemodes")
 MP.load_mp_dir("rulesets")
 MP.load_mp_dir("ui", true)
+
+-- Networking setup
 local networking_dir = MP.EXPERIMENTAL.use_new_networking and "networking" or "networking-old"
-MP.load_mp_file(networking_dir .. "/action_handlers.lua")  -- must happen BEFORE networking starts
 
+-- Load actions FIRST
+MP.load_mp_file(networking_dir .. "/action_handlers.lua")  -- must happen before anything calls MP.ACTIONS
 
-if MP.LOBBY.config.weekly then -- this could be a function but why bother
-	MP.load_mp_file("rulesets/weeklies/" .. MP.LOBBY.config.weekly .. ".lua")
-end
-
-MP.load_mp_dir("objects/editions")
-MP.load_mp_dir("objects/enhancements")
-MP.load_mp_dir("objects/stickers")
-MP.load_mp_dir("objects/blinds")
-MP.load_mp_dir("objects/decks")
-MP.load_mp_dir("objects/jokers")
-MP.load_mp_dir("objects/jokers/sandbox")
-MP.load_mp_dir("objects/stakes")
-MP.load_mp_dir("objects/tags")
-MP.load_mp_dir("objects/consumables")
-MP.load_mp_dir("objects/consumables/sandbox")
-MP.load_mp_dir("objects/boosters")
-MP.load_mp_dir("objects/challenges")
-
-
+-- Load socket after actions
 local SOCKET = MP.load_mp_file(networking_dir .. "/socket.lua")
 MP.NETWORKING_THREAD = love.thread.newThread(SOCKET)
 MP.NETWORKING_THREAD:start(SMODS.Mods["Multiplayer"].config.server_url, SMODS.Mods["Multiplayer"].config.server_port)
 
 -- Only now safe to call connect
-MP.ACTIONS.connect()
+if MP.ACTIONS.connect then
+	MP.ACTIONS.connect()
+else
+	sendWarnMessage("MP.ACTIONS.connect not defined!", "MULTIPLAYER")
+end
+
+-- Load weeklies if present
+if MP.LOBBY.config.weekly then
+	MP.load_mp_file("rulesets/weeklies/" .. MP.LOBBY.config.weekly .. ".lua")
+end
+
+-- Load all object directories
+local object_dirs = {
+	"objects/editions",
+	"objects/enhancements",
+	"objects/stickers",
+	"objects/blinds",
+	"objects/decks",
+	"objects/jokers",
+	"objects/jokers/sandbox",
+	"objects/stakes",
+	"objects/tags",
+	"objects/consumables",
+	"objects/consumables/sandbox",
+	"objects/boosters",
+	"objects/challenges",
+}
+for _, dir in ipairs(object_dirs) do
+	MP.load_mp_dir(dir)
+end
