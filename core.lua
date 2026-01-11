@@ -51,6 +51,11 @@ MP.EXPERIMENTAL = {
 
 G.C.MULTIPLAYER = HEX("AC3232")
 MP.SMODS_VERSION = "1.0.0~BETA-1221a"
+-- Helper for insane integer values
+MP.INSANE_INT = {}
+function MP.INSANE_INT.empty()
+	return 9007199254740991 -- max safe integer
+end
 
 -- Utility function to check if "the order" should be used
 function MP.should_use_the_order()
