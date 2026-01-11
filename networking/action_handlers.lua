@@ -1058,33 +1058,3 @@ function Game:update(dt)
         end
     until not msg
 end
-
--- =========================
--- DISCONNECTED
--- =========================
-local function action_disconnected()
-	MP.LOBBY.connected = false
-	MP.UI.update_connection_status()
-
-	-- RECONNECT: DO NOT CLEAR LOBBY OR GAME STATE
-end
--- #region Client to Server
-
-
-local game_update_ref = Game.update
----@diagnostic disable-next-line: duplicate-set-field
-function Game:update(dt)
-	game_update_ref(self, dt)
-
-	repeat
-		local msg = love.thread.getChannel("networkToUi"):pop()
-		if msg then
-			local parsedAction = json.decode(msg)
-
-			if parsedAction.action == "connected" then
-				action_connected(parsedAction.playerId)
-			elseif parsedAction.action == "disconnected" then
-				action_disconnected()
-		end
-	until not msg
-end
