@@ -1021,11 +1021,16 @@ function MP.ACTIONS.update_player_usernames()
 	end
 end
 
+local function trim(value)
+	if type(value) ~= "string" then return value end
+	return string.match(value, "^%s*(.-)%s*$")
+end
+
 local function string_to_table(str)
 	local tbl = {}
 	for part in string.gmatch(str, "([^,]+)") do
 		local key, value = string.match(part, "([^:]+):(.+)")
-		if key and value then tbl[key] = value end
+		if key and value then tbl[trim(key)] = trim(value) end
 	end
 	return tbl
 end
@@ -1043,6 +1048,7 @@ local function parse_action_message(msg)
 end
 
 local last_game_seed = nil
+local last_unparseable_packet = nil
 
 local game_update_ref = Game.update
 ---@diagnostic disable-next-line: duplicate-set-field
@@ -1161,6 +1167,7 @@ function Game:update(dt)
 			elseif parsedAction.action == "keepAlive" then
 				action_keep_alive()
 			end
+			::continue::
 		end
 	until not msg
 end
