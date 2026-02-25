@@ -36,7 +36,7 @@ local isRetry = false
 local retryCount = 0
 
 local function is_connect_message(msg)
-	return msg == "{\"action\":\"connect\"}"
+	return msg == "{\"action\":\"connect\"}" or msg == "action:connect" or msg == "connect"
 end
 
 function Networking.connect()
