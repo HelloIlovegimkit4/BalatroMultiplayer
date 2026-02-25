@@ -1036,31 +1036,12 @@ local function string_to_table(str)
 end
 
 local function parse_action_message(msg)
-	msg = trim(msg)
-	if not msg or msg == "" then return nil end
-
-	if string.sub(msg, 1, 1) == "{" then
-		local decoded = json.decode(msg)
-		if decoded and decoded.action then return decoded end
-	end
+	if string.sub(msg, 1, 1) == "{" then return json.decode(msg) end
 
 	local parsed = string_to_table(msg)
 	if parsed and parsed.action then
 		Client.legacy_protocol = true
 		return parsed
-	end
-
-	if string.find(msg, "action:", 1, true) == 1 then
-		local action = trim(string.sub(msg, 8))
-		if action ~= "" then
-			Client.legacy_protocol = true
-			return { action = action }
-		end
-	end
-
-	if msg == "connected" or msg == "disconnected" or msg == "keepAlive" or msg == "keepAliveAck" then
-		Client.legacy_protocol = true
-		return { action = msg }
 	end
 
 	return nil
@@ -1079,11 +1060,8 @@ function Game:update(dt)
 			if msg then
 				local parsedAction = parse_action_message(msg)
 				if not parsedAction then
-					if msg ~= last_unparseable_packet then
-						last_unparseable_packet = msg
-						sendWarnMessage("Received unparseable multiplayer packet: " .. tostring(msg), "MULTIPLAYER")
-					end
-					goto continue
+					sendWarnMessage("Received unparseable multiplayer packet", "MULTIPLAYER")
+					return
 				end
 
 			if not ((parsedAction.action == "keepAlive") or (parsedAction.action == "keepAliveAck")) then
