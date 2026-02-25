@@ -32,16 +32,10 @@ Networking = {}
 local isSocketClosed = true
 local networkToUiChannel = love.thread.getChannel("networkToUi")
 local uiToNetworkChannel = love.thread.getChannel("uiToNetwork")
-local isRetry = false
-local retryCount = 0
-
-local function is_connect_message(msg)
-	return msg == "{\"action\":\"connect\"}" or msg == "action:connect" or msg == "connect"
-end
 
 function Networking.connect()
-	if Networking.Client then pcall(function() Networking.Client:close() end) end
-	isSocketClosed = true
+	-- TODO: Check first if Networking.Client is not null
+	-- and if it is, skip this function
 
 	SEND_THREAD_DEBUG_MESSAGE(
 		string.format("Attempting to connect to multiplayer server... URL: %s, PORT: %d", CONFIG_URL, CONFIG_PORT)
@@ -76,16 +70,10 @@ local mainThreadMessageQueue = function()
 		for _ = 1, requestsPerCycle do
 			local msg = uiToNetworkChannel:pop()
 			if msg then
-				if is_connect_message(msg) then
+				if msg == "{\"action\":\"connect\"}" then
 					Networking.connect()
-				elseif Networking.Client and not isSocketClosed then
-					local ok, sendError = Networking.Client:send(msg .. "\n")
-					if not ok and sendError == "closed" then
-						isSocketClosed = true
-						retryCount = 0
-						isRetry = false
-						networkToUiChannel:push("{\"action\":\"disconnected\"}")
-					end
+				else
+					Networking.Client:send(msg .. "\n")
 				end
 			else
 				-- If there are no more messages, yield
@@ -112,6 +100,9 @@ local timerCoroutine = coroutine.create(timer)
 local keepAliveInitialTimeout = 7
 local keepAliveRetryTimeout = 3
 local keepAliveRetryCount = 3
+
+local isRetry = false
+local retryCount = 0
 
 -- Check for network packets
 local networkPacketQueue = function()
