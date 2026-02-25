@@ -1,25 +1,47 @@
 local json = require("json")
 
 Client = {}
+Client.legacy_protocol = false
+
+local function to_legacy_value(value)
+	if value == nil then return "" end
+	if type(value) == "boolean" then return value and "true" or "false" end
+	return tostring(value)
+end
+
+local function legacy_encode(msg)
+	local encoded = { "action:" .. tostring(msg.action or "") }
+	for key, value in pairs(msg) do
+		if key ~= "action" then
+			table.insert(encoded, string.format("%s:%s", key, to_legacy_value(value)))
+		end
+	end
+	return table.concat(encoded, ",")
+end
 
 function Client.send(msg)
-	msg = json.encode(msg)
-	if msg ~= '{"action":"keepAliveAck"}' then
-		sendTraceMessage(string.format("Client sent message: %s", msg), "MULTIPLAYER")
+	local serialized_msg = Client.legacy_protocol and legacy_encode(msg) or json.encode(msg)
+	if serialized_msg ~= '{"action":"keepAliveAck"}' and serialized_msg ~= "action:keepAliveAck" then
+		sendTraceMessage(string.format("Client sent message: %s", serialized_msg), "MULTIPLAYER")
 	end
-	love.thread.getChannel("uiToNetwork"):push(msg)
+	love.thread.getChannel("uiToNetwork"):push(serialized_msg)
+end
+
+local function build_username_payload()
+	return {
+		action = "username",
+		username = MP.LOBBY.username .. "~" .. MP.LOBBY.blind_col,
+		modHash = MP.MOD_STRING,
+		modhash = MP.MOD_HASH,
+		installedMods = MP.MOD_STRING,
+		installed_mods = MP.MOD_STRING,
+	}
 end
 
 -- Server to Client
 function MP.ACTIONS.set_username(username)
 	MP.LOBBY.username = username or "Guest"
-	if MP.LOBBY.connected then
-		Client.send({
-			action = "username",
-			username = MP.LOBBY.username .. "~" .. MP.LOBBY.blind_col,
-			modHash = MP.MOD_STRING,
-		})
-	end
+	if MP.LOBBY.connected then Client.send(build_username_payload()) end
 end
 
 function MP.ACTIONS.set_blind_col(num)
@@ -29,11 +51,7 @@ end
 local function action_connected()
 	MP.LOBBY.connected = true
 	MP.UI.update_connection_status()
-	Client.send({
-		action = "username",
-		username = MP.LOBBY.username .. "~" .. MP.LOBBY.blind_col,
-		modHash = MP.MOD_STRING,
-	})
+	Client.send(build_username_payload())
 end
 
 local function action_joinedLobby(code, type)
@@ -47,7 +65,7 @@ end
 
 local function action_lobbyInfo(host, hostHash, hostCached, guest, guestHash, guestCached, guestReady, is_host)
 	MP.LOBBY.players = {}
-	MP.LOBBY.is_host = is_host
+	MP.LOBBY.is_host = is_host == true or is_host == "true"
 	local function parseName(name)
 		local username, col_str = string.match(name, "([^~]+)~(%d+)")
 		username = username or "Guest"
@@ -62,7 +80,7 @@ local function action_lobbyInfo(host, hostHash, hostCached, guest, guestHash, gu
 		blind_col = hostCol,
 		hash_str = hostMods,
 		hash = hash(hostMods),
-		cached = hostCached,
+		cached = hostCached == true or hostCached == "true",
 		config = hostConfig,
 	}
 
@@ -74,7 +92,7 @@ local function action_lobbyInfo(host, hostHash, hostCached, guest, guestHash, gu
 			blind_col = guestCol,
 			hash_str = guestMods,
 			hash = hash(guestMods),
-			cached = guestCached,
+			cached = guestCached == true or guestCached == "true",
 			config = guestConfig,
 		}
 	else
@@ -83,7 +101,7 @@ local function action_lobbyInfo(host, hostHash, hostCached, guest, guestHash, gu
 
 	-- TODO: This should check for player count instead
 	-- once we enable more than 2 players
-	MP.LOBBY.ready_to_start = guest ~= nil and guestReady
+	MP.LOBBY.ready_to_start = guest ~= nil and (guestReady == true or guestReady == "true")
 
 	if MP.LOBBY.is_host then MP.ACTIONS.lobby_options() end
 
@@ -104,6 +122,7 @@ end
 
 local function action_disconnected()
 	MP.LOBBY.connected = false
+	Client.legacy_protocol = false
 	if MP.LOBBY.code then MP.LOBBY.code = nil end
 	MP.UI.update_connection_status()
 end
@@ -1002,39 +1021,70 @@ function MP.ACTIONS.update_player_usernames()
 	end
 end
 
+local function trim(value)
+	if type(value) ~= "string" then return value end
+	return string.match(value, "^%s*(.-)%s*$")
+end
+
 local function string_to_table(str)
 	local tbl = {}
 	for part in string.gmatch(str, "([^,]+)") do
 		local key, value = string.match(part, "([^:]+):(.+)")
-		if key and value then tbl[key] = value end
+		if key and value then tbl[trim(key)] = trim(value) end
 	end
 	return tbl
 end
 
+local function parse_action_message(msg)
+	msg = trim(msg)
+	if not msg or msg == "" then return nil end
+
+	if string.sub(msg, 1, 1) == "{" then
+		local decoded = json.decode(msg)
+		if decoded and decoded.action then return decoded end
+	end
+
+	local parsed = string_to_table(msg)
+	if parsed and parsed.action then
+		Client.legacy_protocol = true
+		return parsed
+	end
+
+	if string.find(msg, "action:", 1, true) == 1 then
+		local action = trim(string.sub(msg, 8))
+		if action ~= "" then
+			Client.legacy_protocol = true
+			return { action = action }
+		end
+	end
+
+	if msg == "connected" or msg == "disconnected" or msg == "keepAlive" or msg == "keepAliveAck" then
+		Client.legacy_protocol = true
+		return { action = msg }
+	end
+
+	return nil
+end
+
 local last_game_seed = nil
+local last_unparseable_packet = nil
 
 local game_update_ref = Game.update
 ---@diagnostic disable-next-line: duplicate-set-field
 function Game:update(dt)
 	game_update_ref(self, dt)
 
-	repeat
-		local msg = love.thread.getChannel("networkToUi"):pop()
-		if msg then
-			-- horribly messy catch
-			if string.sub(msg, 1, 1) == "a" then
-				if msg ~= "action:keepAlive" then
-					local networkToUiChannel = love.thread.getChannel("networkToUi")
-					networkToUiChannel:push(json.encode({
-						action = "error",
-						message = "Attempting to connect to outdated server",
-					}))
-					networkToUiChannel:push('{"action":"disconnected"}')
+		repeat
+			local msg = love.thread.getChannel("networkToUi"):pop()
+			if msg then
+				local parsedAction = parse_action_message(msg)
+				if not parsedAction then
+					if msg ~= last_unparseable_packet then
+						last_unparseable_packet = msg
+						sendWarnMessage("Received unparseable multiplayer packet: " .. tostring(msg), "MULTIPLAYER")
+					end
+					goto continue
 				end
-				return
-			end
-
-			local parsedAction = json.decode(msg)
 
 			if not ((parsedAction.action == "keepAlive") or (parsedAction.action == "keepAliveAck")) then
 				local log = string.format("Client got %s message: ", parsedAction.action)
@@ -1139,6 +1189,7 @@ function Game:update(dt)
 			elseif parsedAction.action == "keepAlive" then
 				action_keep_alive()
 			end
+			::continue::
 		end
 	until not msg
 end
